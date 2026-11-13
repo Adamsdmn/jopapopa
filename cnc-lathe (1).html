@@ -1,0 +1,598 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Токарный ЧПУ Станок</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<style>
+/* Layout: слева экран станка + стойка (DRO) + кнопки, справа программа, заготовка, журнал движений.
+   Единый тёмный вид "стойки ЧПУ": графит, янтарный (подача), голубой (быстрый ход), красный (авария). */
+:root{
+  --bg:#0d1013; --panel:#14191e; --panel2:#1a2027; --line:#28313b;
+  --txt:#dbe3ea; --dim:#8a97a4; --amber:#ffb300; --cyan:#46c2ff; --red:#ff5468; --green:#6fdc8c;
+  --head:'Barlow Condensed','Arial Narrow',sans-serif; --mono:'JetBrains Mono',ui-monospace,Consolas,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--txt);font:14px/1.45 system-ui,-apple-system,'Segoe UI',sans-serif;
+  padding-block:14px 28px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1380px;margin:0 auto}
+.top{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:12px}
+h1{font:700 30px/1 var(--head);letter-spacing:.04em;text-transform:uppercase;margin:0}
+.sub{color:var(--dim);font-size:13px}
+.pill{margin-left:auto;font:600 14px var(--mono);padding:5px 12px;border:1px solid var(--line);border-radius:4px;background:var(--panel2);letter-spacing:.06em}
+.pill.run{color:var(--green);border-color:var(--green)} .pill.alarm{color:#fff;background:var(--red);border-color:var(--red)} .pill.pause{color:var(--amber);border-color:var(--amber)}
+.grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:14px;align-items:start}
+@media(max-width:980px){.grid{grid-template-columns:minmax(0,1fr)}}
+.col{display:flex;flex-direction:column;gap:12px;min-width:0}
+.screen{background:#090b0d;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+canvas{display:block;width:100%;height:auto;aspect-ratio:16/10;touch-action:pan-y}
+.dro{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+.cell{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:7px 10px;min-width:0}
+.cell b{display:block;font:500 11px var(--mono);color:var(--dim);letter-spacing:.1em;text-transform:uppercase}
+.cell span{display:block;font:700 22px/1.25 var(--mono);color:var(--amber);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cell span.sm{font-size:15px;color:var(--txt);padding-top:4px}
+.ctl{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+button,select,input{font:inherit;color:var(--txt)}
+button{background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:8px 14px;cursor:pointer;font-weight:600}
+button:hover{border-color:var(--dim)} button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--cyan);outline-offset:1px}
+button.go{background:var(--green);color:#06210e;border-color:var(--green)}
+button.stop{color:var(--red)}
+select,input{background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:7px 8px}
+.ctl label{color:var(--dim);font-size:13px;display:flex;gap:6px;align-items:center}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px;min-width:0}
+.card h2{font:600 17px var(--head);letter-spacing:.08em;text-transform:uppercase;margin:0 0 8px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.card h2 select{margin-left:auto;font-size:13px}
+.ed{position:relative;height:310px;background:#0b0e11;border:1px solid var(--line);border-radius:4px;overflow:hidden;font:13px/20px var(--mono)}
+.gut,.hl{position:absolute;top:0;margin:0;padding:8px 0;white-space:pre;pointer-events:none}
+.gut{left:0;width:38px;text-align:right;padding-right:8px;color:var(--dim);border-right:1px solid var(--line);height:100%;overflow:hidden;background:#0b0e11}
+.gut div,.hl div{height:20px}
+.hl{left:38px;right:0}
+.hl .cur{background:rgba(255,179,0,.22);box-shadow:inset 3px 0 var(--amber)} .hl .bad{background:rgba(255,84,104,.25)}
+#src{position:absolute;left:38px;right:0;top:0;bottom:0;width:calc(100% - 38px);background:transparent;border:0;resize:none;padding:8px 10px;
+  font:13px/20px var(--mono);color:var(--txt);white-space:pre;overflow:auto;tab-size:2;caret-color:var(--amber)}
+.err{color:var(--red);font:12px/1.5 var(--mono);margin-top:6px;white-space:pre-wrap}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
+.row label{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--dim)} .row input{width:92px}
+.tools{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px;margin-top:10px}
+.tool{border:1px solid var(--line);border-radius:4px;padding:6px 8px;font-size:12px;color:var(--dim)}
+.tool b{font:700 14px var(--mono);color:var(--txt)} .tool.on{border-color:var(--amber)} .tool.on b{color:var(--amber)}
+.tool i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px}
+.logbox{max-height:340px;overflow:auto;border:1px solid var(--line);border-radius:4px}
+table{border-collapse:collapse;width:100%;font:12px/1.4 var(--mono);white-space:nowrap}
+th{position:sticky;top:0;background:var(--panel2);color:var(--dim);text-align:left;font-weight:500;padding:6px 8px}
+td{padding:5px 8px;border-top:1px solid var(--line)} tr.cur td{background:rgba(255,179,0,.18)} tr.done td{color:var(--dim)}
+td.n{font-variant-numeric:tabular-nums} .g0{color:var(--cyan)} .g1{color:var(--amber)} .gt{color:var(--green)}
+details{margin-top:8px;color:var(--dim);font-size:13px} summary{cursor:pointer;color:var(--txt)} details code{font-family:var(--mono);color:var(--amber)}
+details ul{margin:6px 0 0;padding-left:18px} .tot{font:12px var(--mono);color:var(--dim);margin-top:8px}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+
+.chips{display:flex;gap:6px;overflow-x:auto;padding:8px 0 2px;-webkit-overflow-scrolling:touch}
+.chips button{flex:0 0 auto;font:600 13px var(--mono);padding:7px 11px;min-width:40px}
+@media(max-width:700px){
+  body{padding-bottom:calc(84px + env(safe-area-inset-bottom,0px))}
+  h1{font-size:24px}.sub{display:none}
+  canvas{aspect-ratio:1200/1100}
+  .ctl{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--panel);border-top:1px solid var(--line);flex-wrap:nowrap;gap:6px;
+    padding:8px max(10px,env(safe-area-inset-right,0px)) calc(8px + env(safe-area-inset-bottom,0px)) max(10px,env(safe-area-inset-left,0px))}
+  .ctl button{flex:1 1 0;min-width:0;min-height:48px;padding:6px 2px;font-size:13px}
+  .ctl label span{display:none} .ctl select{min-height:48px;width:78px;font-size:15px}
+  .dro{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.cell span{font-size:21px}
+  select,input,#src{font-size:16px} .row input{width:100%} .row label{flex:1 1 42%} .row button{min-height:44px}
+  .ed{height:280px} .chips button{min-height:42px}
+  .card{padding:10px} .logbox{max-height:300px}
+}
+</style>
+<div class="wrap">
+<header class="top"><h1>Токарный ЧПУ</h1><span class="sub">2D · оси X / Z · резец снизу вверх</span><div id="status" class="pill">СТОП</div></header>
+<div class="grid">
+ <div class="col">
+  <div class="screen"><canvas id="cv" width="1200" height="750"></canvas></div>
+  <div class="dro" id="dro">
+   <div class="cell"><b>X ⌀, мм</b><span id="dX">100.000</span></div>
+   <div class="cell"><b>Z, мм</b><span id="dZ">50.000</span></div>
+   <div class="cell"><b>F, мм/мин</b><span id="dF">0</span></div>
+   <div class="cell"><b>S, об/мин</b><span id="dS">0</span></div>
+   <div class="cell"><b>Vc, м/мин</b><span id="dV">0</span></div>
+   <div class="cell"><b>Инструмент</b><span id="dT" class="sm">T1</span></div>
+   <div class="cell"><b>Режим</b><span id="dM" class="sm">—</span></div>
+  </div>
+  <div class="ctl">
+   <button id="bGo" class="go">▶ Пуск</button><button id="bPause">⏸ Пауза</button><button id="bStep">⏭ Кадр</button><button id="bReset" class="stop">↺ Сброс</button>
+   <label><span>Скорость</span> <select id="speed"><option value="1">×1 (реальная)</option><option value="5">×5</option><option value="10" selected>×10</option><option value="30">×30</option><option value="100">×100</option><option value="2000">Макс</option></select></label>
+  </div>
+ </div>
+ <div class="col">
+  <div class="card">
+   <h2>Программа <select id="ex"></select></h2>
+   <div class="ed"><div class="gut" id="gut"></div><div class="hl" id="hl"></div><textarea id="src" spellcheck="false" wrap="off"></textarea></div>
+   <div class="chips"><button type="button" data-t="G0 ">G0</button><button type="button" data-t="G1 ">G1</button><button type="button" data-t="G2 ">G2</button><button type="button" data-t="G3 ">G3</button><button type="button" data-t="X">X</button><button type="button" data-t="Z">Z</button><button type="button" data-t="F">F</button><button type="button" data-t="S">S</button><button type="button" data-t="R">R</button><button type="button" data-t="T0101">T0101</button><button type="button" data-t="M3">M3</button><button type="button" data-t="M5">M5</button><button type="button" data-t="G96 S">G96 S</button><button type="button" data-t="G97 S">G97 S</button><button type="button" data-t="G99 ">G99</button><button type="button" data-t="M30">M30</button><button type="button" data-t="\\n">⏎</button></div>
+   <div id="err" class="err"></div>
+   <details><summary>Какие коды понимает станок</summary><ul>
+    <li><code>G0</code> быстрый ход, <code>G1</code> линия, <code>G2/G3</code> дуга по часовой / против (<code>R</code> или <code>I K</code>, I в радиусе)</li>
+    <li><code>X</code> диаметр, <code>Z</code> по оси шпинделя (от патрона вправо плюс), <code>U/W</code> приращения</li>
+    <li><code>T0101</code> смена инструмента (T1–T4), <code>G28</code> в исходную точку, <code>G4 P1</code> пауза</li>
+    <li><code>M3/M4</code> шпиндель вперёд/назад, <code>M5</code> стоп, <code>M8/M9</code> СОЖ, <code>M30</code> конец</li>
+    <li><code>G97 S1200</code> обороты, <code>G96 S180</code> постоянная скорость резания м/мин, <code>G50 S3000</code> предел оборотов</li>
+    <li><code>G98</code> подача мм/мин, <code>G99</code> подача мм/об, <code>F</code> подача, <code>G90/G91</code> абсолютные / приращения</li>
+    <li>Z у канавочного и отрезного резца задаёт левую кромку пластины. Комментарии в <code>( )</code> или после <code>;</code></li></ul></details>
+  </div>
+  <div class="card">
+   <h2>Заготовка и револьвер</h2>
+   <div class="row"><label>Диаметр, мм<input id="sD" type="number" value="40" min="10" max="80"></label><label>Вылет, мм<input id="sL" type="number" value="70" min="20" max="120"></label><label>Припуск по торцу<input id="sA" type="number" value="2" min="0" max="10" step="0.5"></label><button id="bStock">Применить</button></div>
+   <div class="tools" id="tools"></div>
+  </div>
+  <div class="card">
+   <h2>Движения резца и шпинделя</h2>
+   <div class="logbox"><table><thead><tr><th>Строка</th><th>Кадр</th><th>Движение</th><th>X</th><th>Z</th><th>Подача</th><th>Шпиндель</th><th>T</th></tr></thead><tbody id="log"></tbody></table></div>
+   <div class="tot" id="tot">Журнал появится после первого запуска.</div>
+  </div>
+ </div>
+</div>
+</div>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+const CS=0.05, KFLANK=0.7, RAPID=10000, HOME={x:100,z:50};
+const LIM={xmax:120,zmin:-250,zmax:60};
+const TOOLS={1:{n:'Проходной',w:8,c:'#ffb300'},2:{n:'Канавочный 3 мм',w:3,c:'#46c2ff'},3:{n:'Чистовой',w:8,c:'#6fdc8c'},4:{n:'Отрезной 2 мм',w:2,c:'#ff7a90'}};
+const f2=(v,n=3)=>(Math.round(v*1e3)/1e3).toFixed(n);
+
+/* ---------- Компиляция G-кода в список событий ---------- */
+function compile(src){
+  const events=[],errs=[];
+  const st={g:0,abs:true,perRev:true,css:false,S:0,Vc:0,maxS:3000,dir:0,tool:1,x:HOME.x,z:HOME.z,F:0};
+  const rpmAt=x=>{
+    if(!st.dir)return 0;
+    if(st.css)return Math.min(st.maxS,x>0.5?1000*st.Vc/(Math.PI*x):st.maxS);
+    return Math.min(st.S,6000);
+  };
+  const lines=src.split('\n');
+  const fail=(i,m)=>errs.push({line:i,msg:'Строка '+(i+1)+': '+m});
+  let ended=false;
+  for(let i=0;i<lines.length&&!ended;i++){
+    const l=lines[i].replace(/\([^)]*\)/g,'').replace(/;.*$/,'').trim().toUpperCase();
+    if(!l||l[0]==='%'||/^O\d+$/.test(l))continue;
+    const rest=l.replace(/([A-Z])\s*([+-]?\d*\.?\d+)/g,'').trim();
+    if(rest){fail(i,'не понял «'+rest+'»');continue}
+    const gs=[],ms=[],v={};
+    for(const m of l.matchAll(/([A-Z])\s*([+-]?\d*\.?\d+)/g)){
+      const c=m[1],n=parseFloat(m[2]);
+      if(c==='G')gs.push(n);else if(c==='M')ms.push(n);else v[c]=n;
+    }
+    const start=errs.length;
+    let motion=null,dwell=null,home=false;
+    for(const g of gs){
+      if(g===0||g===1||g===2||g===3){st.g=g;motion=g}
+      else if(g===4)dwell=v.P!==undefined?v.P:(v.X!==undefined?v.X:1);
+      else if(g===28)home=true;
+      else if(g===50){if(v.S!==undefined){st.maxS=v.S;delete v.S}}
+      else if(g===96)st.css=true; else if(g===97)st.css=false;
+      else if(g===98)st.perRev=false; else if(g===99)st.perRev=true;
+      else if(g===90)st.abs=true; else if(g===91)st.abs=false;
+      else if([21,40,54,55,56,57,58,59].includes(g)){}
+      else fail(i,'G'+g+' не поддерживается');
+    }
+    if(v.T!==undefined){
+      const s=String(Math.round(v.T)),tool=s.length>=3?parseInt(s.slice(0,s.length-2)):parseInt(s);
+      if(!TOOLS[tool])fail(i,'инструмента T'+tool+' нет в револьвере (есть 1–4)');
+      else{st.tool=tool;events.push({k:'tool',line:i,src:l,tool,dur:1.2,dir:st.dir,x:st.x,z:st.z,rpm:rpmAt(st.x)})}
+    }
+    if(v.S!==undefined){if(st.css)st.Vc=v.S;else st.S=v.S}
+    if(v.F!==undefined)st.F=v.F;
+    for(const m of ms){
+      if(m===3||m===4||m===5){
+        st.dir=m===5?0:m;
+        events.push({k:'spin',line:i,src:l,dir:st.dir,tool:st.tool,dur:0.8,x:st.x,z:st.z,css:st.css,Vc:st.Vc,S:st.S,maxS:st.maxS,rpm:rpmAt(st.x),m})
+      }else if(m===8||m===9)events.push({k:'misc',line:i,src:l,tool:st.tool,dir:st.dir,dur:0.3,x:st.x,z:st.z,rpm:rpmAt(st.x),txt:m===8?'СОЖ вкл':'СОЖ выкл'});
+      else if(m===0||m===1||m===2||m===30){events.push({k:'end',line:i,src:l,tool:st.tool,dir:0,dur:0,x:st.x,z:st.z,rpm:0});ended=true}
+      else fail(i,'M'+m+' не поддерживается');
+    }
+    if(dwell!==null)events.push({k:'dwell',line:i,src:l,tool:st.tool,dir:st.dir,dur:Math.max(0,dwell),x:st.x,z:st.z,rpm:rpmAt(st.x)});
+    let tx=st.x,tz=st.z,has=false;
+    if(home){tx=HOME.x;tz=HOME.z;has=true;motion=0;st.g=0}
+    else{
+      if(v.X!==undefined){tx=st.abs?v.X:st.x+v.X;has=true}
+      if(v.U!==undefined){tx=st.x+v.U;has=true}
+      if(v.Z!==undefined){tz=st.abs?v.Z:st.z+v.Z;has=true}
+      if(v.W!==undefined){tz=st.z+v.W;has=true}
+    }
+    if(has&&motion===null&&!home)motion=st.g;
+    if(has&&motion!==null&&errs.length===start){
+      const g=motion;
+      if(tx<0||tx>LIM.xmax||tz<LIM.zmin||tz>LIM.zmax){fail(i,'выход за пределы хода станка (X 0…'+LIM.xmax+', Z '+LIM.zmin+'…'+LIM.zmax+')');continue}
+      const r0=st.x/2,r1=tx/2,z0=st.z,z1=tz;
+      let arc=null,len=Math.hypot(z1-z0,r1-r0);
+      if(g>=2){
+        const cw=g===2;let cz,cr,R;
+        if(v.R!==undefined){
+          R=Math.abs(v.R);const dz=z1-z0,dr=r1-r0,c=Math.hypot(dz,dr);
+          if(c<1e-9||c>2*R+1e-9){fail(i,'дуга: радиус R слишком мал для этой хорды');continue}
+          const h=Math.sqrt(Math.max(0,R*R-c*c/4)),nz=-dr/c,nr=dz/c;
+          let sgn=cw?-1:1;if(v.R<0)sgn=-sgn;
+          cz=(z0+z1)/2+sgn*nz*h;cr=(r0+r1)/2+sgn*nr*h;
+        }else if(v.I!==undefined||v.K!==undefined){
+          cz=z0+(v.K||0);cr=r0+(v.I||0);R=Math.hypot(z0-cz,r0-cr);
+          if(Math.abs(Math.hypot(z1-cz,r1-cr)-R)>0.02){fail(i,'дуга: конец не лежит на окружности (проверьте I, K)');continue}
+        }else{fail(i,'для G2/G3 нужен R или I/K');continue}
+        const a0=Math.atan2(r0-cr,z0-cz);let d=Math.atan2(r1-cr,z1-cz)-a0;
+        if(cw){while(d>1e-9)d-=2*Math.PI;if(Math.abs(d)<1e-9)d=-2*Math.PI}
+        else{while(d<-1e-9)d+=2*Math.PI;if(Math.abs(d)<1e-9)d=2*Math.PI}
+        arc={cz,cr,a0,dA:d,R};len=Math.abs(d)*R;
+      }
+      if(len<1e-9){st.x=tx;st.z=tz;continue}
+      if(g>0){
+        if(!(st.F>0)){fail(i,'не задана подача F');continue}
+        if(st.perRev&&!st.dir){fail(i,'подача в мм/об, а шпиндель выключен (M3 или M4)');continue}
+      }
+      const rpm0=rpmAt(st.x),rpm1=rpmAt(tx);
+      const feed=g===0?RAPID:(st.perRev?st.F*(rpm0+rpm1)/2:st.F);
+      const ev={k:'move',line:i,src:l,g,x0:st.x,z0,x1:tx,z1,len,feed,F:st.F,perRev:st.perRev,rpm0,rpm1,
+        css:st.css,Vc:st.Vc,S:st.S,maxS:st.maxS,dir:st.dir,tool:st.tool,arc,dur:len/feed*60};
+      if(!arc){ev.flat=Math.abs(z1-z0)<=0.2*Math.abs(r1-r0)}
+      events.push(ev);st.x=tx;st.z=tz;
+    }
+  }
+  if(!ended)events.push({k:'end',line:lines.length-1,src:'(конец программы)',tool:st.tool,dir:0,dur:0,x:st.x,z:st.z,rpm:0});
+  let t=0;for(const e of events){e.tStart=t;t+=e.dur}
+  return {events,errs,total:t};
+}
+
+function posOn(ev,f){
+  if(ev.arc){const a=ev.arc.a0+ev.arc.dA*f;return {z:ev.arc.cz+ev.arc.R*Math.cos(a),d:ev.arc.cr+ev.arc.R*Math.sin(a)}}
+  return {z:ev.z0+(ev.z1-ev.z0)*f,d:(ev.x0+(ev.x1-ev.x0)*f)/2};
+}
+function flatAt(ev,f){
+  if(!ev.arc)return ev.flat;
+  const a=ev.arc.a0+ev.arc.dA*f;return Math.abs(Math.sin(a))<=0.2*Math.abs(Math.cos(a));
+}
+/* ---------- Примеры программ ---------- */
+const EXAMPLES=[
+{n:'Ступенчатый валик (T1 + T3, G96)',c:`O0001 (СТУПЕНЧАТЫЙ ВАЛИК)
+G21 G90 G99
+T0101 (ПРОХОДНОЙ)
+G50 S3000
+G96 S160 M3 (ПОСТОЯННАЯ СКОРОСТЬ РЕЗАНИЯ)
+G0 X44 Z2
+G0 Z0
+G1 X0 F0.15 (ПОДРЕЗКА ТОРЦА)
+G0 X44 Z2
+G0 X37
+G1 Z-50 F0.3 (ЧЕРНОВЫЕ ПРОХОДЫ)
+G0 X42
+G0 Z2
+G0 X34
+G1 Z-50
+G0 X42
+G0 Z2
+G0 X31
+G1 Z-50
+G0 X33
+G0 Z2
+G0 X28
+G1 Z-25
+G0 X33
+G0 Z2
+G0 X25
+G1 Z-25
+G0 X33
+G0 Z2
+G0 X100 Z50
+T0303 (ЧИСТОВОЙ)
+G96 S220 M3
+G0 X20 Z2
+G1 Z0 F0.1
+G1 X21
+G1 X24 Z-1.5 (ФАСКА 1.5)
+G1 Z-25
+G1 X28
+G1 X30 Z-26 (ФАСКА 1)
+G1 Z-50
+G1 X42
+G0 X100 Z50
+M5
+M30`},
+{n:'Сфера, конус, канавка (T1 + T2, G2/G3)',c:`O0002 (СФЕРА, КОНУС, КАНАВКА)
+G21 G90 G99
+T0101 (ПРОХОДНОЙ)
+G97 S1200 M3
+G0 X44 Z2
+G0 Z0
+G1 X0 F0.15
+G0 X44 Z2
+G0 X35
+G1 Z-45 F0.25
+G0 X42
+G0 Z2
+G0 X30.5
+G1 Z-45
+G0 X42
+G0 Z2
+G96 S200 (ЧИСТОВОЙ КОНТУР)
+G0 X0 Z2
+G1 Z0 F0.1
+G3 X20 Z-10 R10 (ПОЛУСФЕРА)
+G1 Z-20
+G1 X30 Z-35 (КОНУС)
+G1 Z-45
+G1 X42
+G0 X100 Z50
+T0202 (КАНАВОЧНЫЙ 3 ММ, Z - ЛЕВАЯ КРОМКА)
+G97 S800 M3
+G0 X34 Z-40
+G1 X24 F0.08
+G4 P1.5 (ВЫДЕРЖКА НА ДНЕ)
+G1 X34 F0.5
+G0 X100 Z50
+M5
+M30`},
+{n:'Простой пример (подача мм/мин)',c:`O0003 (ПРОСТОЙ ПРИМЕР)
+G21 G90 G98
+T0101
+G97 S1000 M3
+G0 X44 Z2
+G0 Z0
+G1 X0 F120 (ТОРЕЦ)
+G0 X44 Z2
+G0 X36
+G1 Z-30 F150
+G0 X42
+G0 Z2
+G0 X32
+G1 Z-30
+G0 X42
+G0 X100 Z50
+M5
+M30`}];
+
+/* ---------- Заготовка и состояние ---------- */
+let D=40,L=70,A=2,front=2,back=-68,N=1400,prof=new Float64Array(N);
+function resetStock(){
+  D=+$('sD').value||40;L=+$('sL').value||70;A=+$('sA').value;if(!(A>=0))A=0;
+  front=A;back=front-L;N=Math.round(L/CS);prof=new Float64Array(N).fill(D/2);
+}
+const run={status:'idle',events:[],i:0,t:0,started:false,x:HOME.x,z:HOME.z,tool:1,dir:0,rpm:0,cur:null,trace:[],angle:0,alarm:'',step:false,stepLine:-1,simT:0,total:0};
+function setStatus(s){run.status=s;const p=$('status');p.className='pill '+(s==='run'?'run':s==='alarm'?'alarm':s==='pause'?'pause':'');
+  p.textContent={idle:'СТОП',run:'РАБОТА',pause:'ПАУЗА',alarm:'АВАРИЯ',done:'ГОТОВО'}[s]}
+function doReset(){
+  resetStock();Object.assign(run,{events:[],i:0,t:0,started:false,x:HOME.x,z:HOME.z,tool:1,dir:0,rpm:0,cur:null,trace:[],alarm:'',step:false,simT:0,total:0});
+  setStatus('idle');setHL(-1);$('log').innerHTML='';$('tot').textContent='Журнал появится после первого запуска.';
+}
+
+/* ---------- Резание ---------- */
+function cutAt(z,d,flat){
+  const w=TOOLS[run.tool].w;
+  let i0=Math.max(0,Math.ceil((z-back)/CS-0.5)),i1=Math.min(N-1,Math.floor((z+w-back)/CS-0.5)),rm=0;
+  for(let i=i0;i<=i1;i++){
+    const lim=d+(flat?0:KFLANK*(back+(i+0.5)*CS-z));
+    if(prof[i]>lim+1e-4){rm+=prof[i]-lim;prof[i]=lim}
+  }
+  if(flat&&d<0.05&&i1<N-1&&i1>=0&&prof[i1]<0.06){for(let i=i1+1;i<N;i++)prof[i]=0}
+  return rm;
+}
+function alarm(msg){run.alarm=msg;setStatus('alarm');$('err').textContent=msg}
+const rpmLive=(ev,x)=>!ev.dir?0:(ev.css?Math.min(ev.maxS,x>0.5?1000*ev.Vc/(Math.PI*x):ev.maxS):Math.min(ev.S,6000));
+
+function sampleMove(ev,f0,f1){
+  const n=Math.max(1,Math.ceil(ev.len*(f1-f0)/0.02));
+  for(let k=1;k<=n;k++){
+    const f=f0+(f1-f0)*k/n,p=posOn(ev,f);
+    if(p.z<back-0.001&&p.d<46){alarm('АВАРИЯ: резец столкнулся с патроном');return}
+    const rm=cutAt(p.z,p.d,flatAt(ev,f));
+    if(ev.g===0&&rm>0.01){alarm('АВАРИЯ: быстрый ход G0 в материал. Подводите резец G0 в безопасную точку, режьте на G1/G2/G3');return}
+    run.z=p.z;run.x=p.d*2;
+    const tr=run.trace,l=tr[tr.length-1];
+    if(!l||Math.hypot(l.z-p.z,l.d-p.d)>0.3||l.t!==(ev.g?1:0)){tr.push({z:p.z,d:p.d,t:ev.g?1:0});if(tr.length>30000)tr.shift()}
+  }
+  run.rpm=rpmLive(ev,run.x);
+}
+function begin(ev){
+  run.cur=ev;
+  if(ev.k==='tool'){run.tool=ev.tool;run.rpm=ev.rpm}
+  if(ev.k==='spin'){run.dir=ev.dir;run.rpm=ev.rpm}
+  if(ev.k==='move'){run.tool=ev.tool;run.dir=ev.dir}
+  setHL(ev.line);markRow(run.i);
+}
+function advance(sim){
+  let guard=0;
+  while(run.status==='run'&&run.i<run.events.length&&guard++<200000){
+    const ev=run.events[run.i];
+    if(!run.started){begin(ev);run.started=true}
+    if(ev.k==='end'){setStatus('done');setHL(-1);break}
+    const remain=ev.dur-run.t;
+    if(sim<=0&&remain>1e-9)break;
+    const take=Math.min(sim,remain);
+    if(ev.k==='move'&&take>0)sampleMove(ev,run.t/ev.dur,(run.t+take)/ev.dur);
+    run.t+=take;sim-=take;run.simT+=take;
+    if(run.status!=='run')break;
+    if(run.t>=ev.dur-1e-9){
+      if(ev.k==='move'){run.x=ev.x1;run.z=ev.z1}
+      doneRow(run.i);run.i++;run.t=0;run.started=false;
+      if(run.step&&run.events[run.i]&&run.events[run.i].line!==run.stepLine){run.step=false;setStatus('pause');break}
+    }else break;
+  }
+}
+
+/* ---------- Журнал ---------- */
+const spinTxt=(dir,r0,r1,css,Vc)=>!dir?'стоп':(dir===3?'M3 ':'M4 ')+Math.round(r0)+(Math.abs(r1-r0)>r0*0.03?'→'+Math.round(r1):'')+' об/мин'+(css?' (Vc '+Vc+')':'');
+function describe(e){
+  const T='T'+e.tool;
+  if(e.k==='move'){
+    const kind=e.g===0?['Быстрый ход G0','g0']:e.g===1?['Линейная G1','g1']:[e.g===2?'Дуга G2 (по ч.)':'Дуга G3 (против ч.)','g1'];
+    const fd=e.g===0?'быстро':e.perRev?e.F+' мм/об ('+Math.round(e.feed)+' мм/мин)':e.F+' мм/мин';
+    return [kind[0],kind[1],f2(e.x1),f2(e.z1),fd,spinTxt(e.dir,e.rpm0,e.rpm1,e.css,e.Vc),T];
+  }
+  const sp=spinTxt(e.dir,e.rpm||0,e.rpm||0,e.css,e.Vc);
+  if(e.k==='tool')return ['Смена инструмента','gt',f2(e.x),f2(e.z),'—',sp,T];
+  if(e.k==='spin')return [e.m===5?'Шпиндель стоп':e.m===3?'Шпиндель вперёд':'Шпиндель назад','gt',f2(e.x),f2(e.z),'—',sp,T];
+  if(e.k==='dwell')return ['Пауза '+e.dur+' с','gt',f2(e.x),f2(e.z),'—',sp,T];
+  if(e.k==='misc')return [e.txt,'gt',f2(e.x),f2(e.z),'—',sp,T];
+  return ['Конец программы','gt',f2(e.x),f2(e.z),'—','стоп',T];
+}
+function buildLog(){
+  const tb=$('log');tb.innerHTML='';
+  run.events.forEach((e,i)=>{
+    const d=describe(e),tr=document.createElement('tr');tr.id='r'+i;
+    tr.innerHTML='<td class="n">'+(e.line+1)+'</td><td>'+e.src.replace(/</g,'&lt;')+'</td><td class="'+d[1]+'">'+d[0]+'</td><td class="n">'+d[2]+'</td><td class="n">'+d[3]+'</td><td>'+d[4]+'</td><td>'+d[5]+'</td><td>'+d[6]+'</td>';
+    tb.appendChild(tr);
+  });
+  const mv=run.events.filter(e=>e.k==='move');
+  $('tot').textContent='Кадров движения: '+mv.length+' · путь резца '+f2(mv.reduce((s,e)=>s+e.len,0),1)+' мм · машинное время '+f2(run.total/60,2)+' мин';
+}
+function markRow(i){
+  const old=document.querySelector('#log tr.cur');if(old)old.classList.remove('cur');
+  const r=$('r'+i);if(!r)return;r.classList.add('cur');
+  const b=r.closest('.logbox');b.scrollTop=Math.max(0,r.offsetTop-b.clientHeight/2);
+}
+function doneRow(i){const r=$('r'+i);if(r){r.classList.remove('cur');r.classList.add('done')}}
+
+/* ---------- Редактор ---------- */
+const src=$('src'),gut=$('gut'),hl=$('hl');
+gut.innerHTML='<div class="gin"></div>';hl.innerHTML='<div class="hin"></div>';
+let badLines=[],curLine=-1;
+function paintEditor(){
+  const n=src.value.split('\n').length;
+  gut.firstChild.innerHTML=Array.from({length:n},(_,i)=>'<div>'+(i+1)+'</div>').join('');
+  hl.firstChild.innerHTML=Array.from({length:n},(_,i)=>'<div class="'+(i===curLine?'cur':badLines.includes(i)?'bad':'')+'"></div>').join('');
+  syncScroll();
+}
+function syncScroll(){const t='translateY('+(-src.scrollTop)+'px)';gut.firstChild.style.transform=t;hl.firstChild.style.transform=t}
+function setHL(i){
+  curLine=i;paintEditor();
+  if(i>=0){const y=i*20,h=src.clientHeight-20;if(y<src.scrollTop||y>src.scrollTop+h)src.scrollTop=Math.max(0,y-60);syncScroll()}
+}
+src.addEventListener('input',()=>{badLines=[];$('err').textContent='';paintEditor()});
+src.addEventListener('scroll',syncScroll);
+$('ex').innerHTML='<option value="">Загрузить пример…</option>'+EXAMPLES.map((e,i)=>'<option value="'+i+'">'+e.n+'</option>').join('');
+$('ex').addEventListener('change',e=>{if(e.target.value==='')return;src.value=EXAMPLES[+e.target.value].c;e.target.value='';badLines=[];$('err').textContent='';doReset();paintEditor()});
+
+/* ---------- Кнопки ---------- */
+function launch(stepMode){
+  doReset();if(innerWidth<=700)window.scrollTo({top:0,behavior:'smooth'});
+  const c=compile(src.value);
+  if(c.errs.length){badLines=c.errs.map(e=>e.line);paintEditor();$('err').textContent=c.errs.map(e=>e.msg).join('\n');return false}
+  badLines=[];$('err').textContent='';
+  run.events=c.events;run.total=c.total;buildLog();
+  setStatus('run');
+  if(stepMode){run.step=true;run.stepLine=c.events[0].line}
+  return true;
+}
+$('bGo').onclick=()=>{
+  if(run.status==='pause'){run.step=false;setStatus('run')}
+  else if(run.status!=='run')launch(false)
+};
+$('bPause').onclick=()=>{if(run.status==='run')setStatus('pause')};
+$('bStep').onclick=()=>{
+  if(run.status==='pause'){run.step=true;run.stepLine=run.events[run.i]?run.events[run.i].line:-1;setStatus('run')}
+  else if(run.status!=='run')launch(true)
+};
+$('bReset').onclick=()=>{doReset();$('err').textContent=''};
+$('bStock').onclick=()=>{doReset()};
+$('tools').innerHTML=Object.keys(TOOLS).map(k=>'<div class="tool" id="tl'+k+'"><b>T'+k+'</b> <i style="background:'+TOOLS[k].c+'"></i>'+TOOLS[k].n+'<br>ширина пластины '+TOOLS[k].w+' мм</div>').join('');
+
+document.querySelectorAll('.chips button').forEach(b=>{
+  b.addEventListener('pointerdown',e=>e.preventDefault());
+  b.addEventListener('click',()=>{
+    const t=b.dataset.t.replace('\\n','\n'),a=src.selectionStart,e=src.selectionEnd;
+    src.setRangeText(t,a,e,'end');src.dispatchEvent(new Event('input'));
+  });
+});
+/* ---------- Отрисовка ---------- */
+const cv=$('cv'),ctx=cv.getContext('2d');let W=1200,H=750;
+const mono="'JetBrains Mono',ui-monospace,Consolas,monospace";
+function draw(){
+  const narrow=innerWidth<=700,hh=narrow?1100:750;
+  if(cv.height!==hh)cv.height=hh;
+  W=cv.width;H=cv.height;const k=W/Math.max(1,cv.clientWidth||W);
+  let zmin,zmax,s,ox,oy;
+  if(narrow){zmin=back-18;zmax=Math.max(front,0)+30;s=W/(zmax-zmin);ox=-zmin*s;oy=H*0.34}
+  else{zmin=back-52;zmax=64;const dtop=-50,dbot=62;s=Math.min(W/(zmax-zmin),H/(dbot-dtop));ox=-zmin*s+(W-(zmax-zmin)*s)/2;oy=-dtop*s+(H-(dbot-dtop)*s)/2}
+  const px=z=>ox+z*s,py=d=>oy+d*s;
+  ctx.fillStyle='#090b0d';ctx.fillRect(0,0,W,H);
+  ctx.lineWidth=1;ctx.font=(13*k)+'px '+mono;
+  // сетка: Z вертикали каждые 10 мм, X горизонтали по диаметру
+  ctx.strokeStyle='rgba(138,151,164,.10)';ctx.fillStyle='rgba(138,151,164,.7)';
+  for(let z=Math.ceil(zmin/10)*10;z<=zmax;z+=10){ctx.beginPath();ctx.moveTo(px(z),0);ctx.lineTo(px(z),H);ctx.stroke();if(z%(narrow?40:20)===0)ctx.fillText('Z'+z,px(z)+3,15*k)}
+  for(let x=20;x<=120;x+=20){const y=py(x/2);if(y>H)break;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();ctx.fillText('X'+x,W-38*k,y-4)}
+  ctx.strokeStyle='rgba(138,151,164,.45)';ctx.setLineDash([14,5,2,5]);ctx.beginPath();ctx.moveTo(0,oy);ctx.lineTo(W,oy);ctx.stroke();ctx.setLineDash([]);
+  ctx.strokeStyle='rgba(255,179,0,.5)';ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(px(0),0);ctx.lineTo(px(0),H);ctx.stroke();ctx.setLineDash([]);
+  ctx.fillStyle='rgba(255,179,0,.8)';ctx.fillText('Z0',px(0)+4,H-8);
+  // патрон
+  const R0=D/2;
+  ctx.fillStyle='#232b33';ctx.strokeStyle='#3d4a56';ctx.fillRect(px(back-40),py(-45),40*s,90*s);ctx.strokeRect(px(back-40),py(-45),40*s,90*s);
+  ctx.fillStyle='#34414c';
+  [-1,1].forEach(sg=>{const y0=sg<0?py(-R0-12):py(R0),hh=12*s;ctx.fillRect(px(back-14),y0,14*s,hh);ctx.strokeRect(px(back-14),y0,14*s,hh)});
+  // заготовка
+  const g=ctx.createLinearGradient(0,py(-R0),0,py(R0));g.addColorStop(0,'#4d5964');g.addColorStop(.35,'#b8c3cc');g.addColorStop(.5,'#d9e1e7');g.addColorStop(.7,'#8f9ca7');g.addColorStop(1,'#46515b');
+  ctx.fillStyle=g;ctx.strokeStyle='#e4ebf0';ctx.lineWidth=1.3;
+  for(const sg of[-1,1]){
+    ctx.beginPath();ctx.moveTo(px(back),oy);
+    for(let i=0;i<N;i++){const z=back+(i+.5)*CS;ctx.lineTo(px(z),oy+sg*prof[i]*s)}
+    ctx.lineTo(px(front),oy);ctx.closePath();ctx.fill();
+  }
+  // вращение: линии по поверхности
+  if(run.dir&&run.rpm>0&&run.status!=='idle'){
+    ctx.lineWidth=1;
+    for(let k=0;k<6;k++){
+      const th=run.angle+k*Math.PI/3,sn=Math.sin(th),cs=Math.cos(th);if(cs<=0)continue;
+      ctx.strokeStyle='rgba(20,26,32,'+(0.35*cs).toFixed(2)+')';ctx.beginPath();
+      for(let i=0;i<N;i+=8){const z=back+(i+.5)*CS;ctx.lineTo(px(z),oy+prof[i]*sn*s)}
+      ctx.stroke();
+    }
+  }
+  ctx.lineWidth=1.3;ctx.strokeStyle='#e4ebf0';
+  for(const sg of[-1,1]){ctx.beginPath();for(let i=0;i<N;i++){const z=back+(i+.5)*CS,y=oy+sg*prof[i]*s;i?ctx.lineTo(px(z),y):ctx.moveTo(px(z),y)}ctx.stroke()}
+  // траектория резца
+  const tr=run.trace;ctx.lineWidth=1.6;
+  for(const typ of[0,1]){
+    ctx.strokeStyle=typ?'#ffb300':'rgba(70,194,255,.75)';ctx.setLineDash(typ?[]:[5,4]);ctx.beginPath();
+    for(let j=1;j<tr.length;j++)if(tr[j].t===typ){ctx.moveTo(px(tr[j-1].z),py(tr[j-1].d));ctx.lineTo(px(tr[j].z),py(tr[j].d))}
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  // резец: острие вверх, снизу
+  const tool=TOOLS[run.tool],w=tool.w,tx=px(run.z),ty=py(run.x/2);
+  const P=(a,b)=>[tx+a*s,ty+b*s];
+  ctx.fillStyle='#2b343e';ctx.strokeStyle='#52616f';
+  ctx.beginPath();ctx.rect(tx-4*s,ty+26*s,(w+14)*s,60*s);ctx.fill();ctx.stroke();
+  ctx.fillStyle=tool.c;ctx.strokeStyle='#0b0e11';ctx.lineWidth=1.5;ctx.beginPath();
+  [[0,0],[w,KFLANK*w],[w,26],[0,26]].forEach((p,i)=>{const q=P(p[0],p[1]);i?ctx.lineTo(q[0],q[1]):ctx.moveTo(q[0],q[1])});
+  ctx.closePath();ctx.fill();ctx.stroke();
+  ctx.fillStyle='#0b0e11';ctx.font='700 '+(12*k)+'px '+mono;ctx.fillText('T'+run.tool,tx+(w/2)*s-6*k,ty+60*s);
+  ctx.fillStyle='#ffb300';ctx.beginPath();ctx.arc(tx,ty,3.5,0,7);ctx.fill();
+  // оси
+  ctx.strokeStyle='#8a97a4';ctx.fillStyle='#8a97a4';ctx.lineWidth=1.6;ctx.font='600 '+(14*k)+'px '+mono;
+  const ax=W-70*k,ay=30*k,q=k;
+  ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(ax+40*q,ay);ctx.moveTo(ax+34*q,ay-5*q);ctx.lineTo(ax+40*q,ay);ctx.lineTo(ax+34*q,ay+5*q);
+  ctx.moveTo(ax,ay);ctx.lineTo(ax,ay+40*q);ctx.moveTo(ax-5*q,ay+34*q);ctx.lineTo(ax,ay+40*q);ctx.lineTo(ax+5*q,ay+34*q);ctx.stroke();
+  ctx.fillText('Z',ax+46*q,ay+5*q);ctx.fillText('X',ax-4*q,ay+58*q);
+  // подписи
+  ctx.font='600 '+(15*k)+'px '+mono;ctx.fillStyle='#ffb300';
+  ctx.fillText(run.dir?(run.dir===3?'↻ M3  ':'↺ M4  ')+Math.round(run.rpm)+' об/мин':'шпиндель стоп',12*k,H-30*k);
+  if(run.cur&&run.status!=='idle'){ctx.fillStyle='#dbe3ea';ctx.font=(14*k)+'px '+mono;ctx.fillText(run.cur.src,12*k,H-10*k)}
+  if(run.status==='alarm'){
+    ctx.fillStyle='rgba(255,84,104,.9)';ctx.fillRect(0,H/2-34*k,W,68*k);ctx.fillStyle='#fff';ctx.font='700 '+(15*k)+'px '+mono;ctx.textAlign='center';
+    ctx.fillText(run.alarm.length>60&&narrow?run.alarm.slice(0,run.alarm.indexOf('.')):run.alarm,W/2,H/2+6*k);ctx.textAlign='left';
+  }
+}
+function updateDRO(){
+  const e=run.cur;
+  $('dX').textContent=f2(run.x);$('dZ').textContent=f2(run.z);
+  $('dF').textContent=e&&e.k==='move'&&run.status!=='idle'?(e.g===0?'быстро':Math.round(e.feed)):'0';
+  $('dS').textContent=Math.round(run.rpm);
+  $('dV').textContent=f2(Math.PI*run.x*run.rpm/1000,1);
+  $('dT').textContent='T'+run.tool+' '+TOOLS[run.tool].n;
+  $('dM').textContent=(run.dir?(run.dir===3?'M3':'M4'):'M5')+(e&&e.k==='move'?' G'+e.g:'')+(e&&e.css?' G96':'');
+  for(const k in TOOLS)$('tl'+k).classList.toggle('on',+k===run.tool);
+}
+/* ---------- Главный цикл ---------- */
+let last=performance.now();
+function frame(now){
+  const dt=Math.min(0.05,(now-last)/1000);last=now;
+  if(run.status==='run'){advance(dt*(+$('speed').value));
+    if(run.dir&&run.rpm>0)run.angle+=(run.dir===3?1:-1)*Math.min(run.rpm/200,3)*2*Math.PI*dt}
+  updateDRO();draw();requestAnimationFrame(frame);
+}
+src.value=EXAMPLES[0].c;doReset();paintEditor();
+(document.fonts&&document.fonts.ready?document.fonts.ready:Promise.resolve()).then(()=>{});
+requestAnimationFrame(frame);
+</script>
